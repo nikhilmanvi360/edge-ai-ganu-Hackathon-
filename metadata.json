@@ -1,0 +1,5 @@
+{
+  "name": "Privacy Shield Pro",
+  "description": "Real-time privacy protection system with face and text blurring controls.",
+  "requestFramePermissions": ["camera"]
+}
