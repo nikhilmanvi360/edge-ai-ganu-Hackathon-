@@ -35,6 +35,9 @@ const chromeMock = {
       addListener: (callback: any) => {
         console.log('Listener added');
       }
+    },
+    getURL: (path: string) => {
+      return path;
     }
   }
 };
@@ -88,11 +91,11 @@ export default function App() {
     const initDetector = async () => {
       try {
         const vision = await FilesetResolver.forVisionTasks(
-          './wasm'
+          browser.runtime.getURL('wasm')
         );
         detector = await FaceDetector.createFromOptions(vision, {
           baseOptions: {
-            modelAssetPath: './models/blaze_face_short_range.tflite',
+            modelAssetPath: browser.runtime.getURL('models/blaze_face_short_range.tflite'),
             delegate: 'GPU'
           },
           runningMode: 'VIDEO',
@@ -105,11 +108,11 @@ export default function App() {
         console.error('Failed to initialize FaceDetector:', err);
         try {
           const vision = await FilesetResolver.forVisionTasks(
-            './wasm'
+            browser.runtime.getURL('wasm')
           );
           detector = await FaceDetector.createFromOptions(vision, {
             baseOptions: {
-              modelAssetPath: './models/blaze_face_short_range.tflite',
+              modelAssetPath: browser.runtime.getURL('models/blaze_face_short_range.tflite'),
               delegate: 'CPU'
             },
             runningMode: 'VIDEO',
@@ -234,7 +237,7 @@ export default function App() {
   useEffect(() => {
     let intervalId: number | null = null;
     if (status === 'RUNNING') {
-      intervalId = window.setInterval(() => {
+      intervalId = window.setInterval(async () => {
         const entry: LogEntry = {
           timestamp: new Date().toISOString(),
           fps: fpsRef.current,
@@ -248,7 +251,26 @@ export default function App() {
           if (newLog.length > 3600) return newLog.slice(-3600);
           return newLog;
         });
-      }, 1000);
+
+        try {
+          await fetch('http://localhost:3001/api/telemetry', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              device_id: 'extension-client-1',
+              status: 'RUNNING',
+              cpu_usage: entry.cpuUsage,
+              memory_usage: (performance as any).memory?.usedJSHeapSize || 0,
+              fps: entry.fps,
+              faces_detected: entry.facesCount,
+              pii_detected: entry.piiCount,
+              pii_labels: entry.piiLabels
+            })
+          });
+        } catch (e) {
+          console.error('Local telemetry push failed:', e);
+        }
+      }, 5000);
     }
     return () => {
       if (intervalId) clearInterval(intervalId);
@@ -380,7 +402,7 @@ export default function App() {
         try {
           const nowMs = performance.now();
           const results = faceDetectorRef.current.detectForVideo(videoRef.current, nowMs);
-          const boxes = results.detections.map(d => {
+          const rawBoxes = results.detections.map(d => {
             const bbox = d.boundingBox!;
             return {
               originX: bbox.originX,
@@ -389,8 +411,41 @@ export default function App() {
               height: bbox.height
             };
           });
+
+          // Apply Basic NMS (Non-Maximum Suppression) Using IoU threshold of 0.3
+          // This deduplicates instances where MediaPipe detects the same face multiple times
+          const boxes: Array<{ originX: number; originY: number; width: number; height: number }> = [];
+          for (const box of rawBoxes) {
+            let isDuplicate = false;
+            for (const existingBox of boxes) {
+              const xA = Math.max(box.originX, existingBox.originX);
+              const yA = Math.max(box.originY, existingBox.originY);
+              const xB = Math.min(box.originX + box.width, existingBox.originX + existingBox.width);
+              const yB = Math.min(box.originY + box.height, existingBox.originY + existingBox.height);
+              const interArea = Math.max(0, xB - xA) * Math.max(0, yB - yA);
+              const boxArea = box.width * box.height;
+              const existingArea = existingBox.width * existingBox.height;
+              const iou = interArea / (boxArea + existingArea - interArea);
+
+              if (iou > 0.3) {
+                isDuplicate = true;
+                break;
+              }
+            }
+            if (!isDuplicate) boxes.push(box);
+          }
+
           lastDetectionsRef.current = boxes;
           setDetectionsCount(boxes.length);
+
+          // Log detection to background for history
+          if (boxes.length > 0 || sensitiveRegionsRef.current.length > 0) {
+            browser.runtime.sendMessage({
+              type: 'LOG_DETECTION',
+              faces: boxes.length,
+              pii: sensitiveRegionsRef.current
+            });
+          }
         } catch (e) {
           console.error("Detection error:", e);
         }
@@ -510,6 +565,13 @@ export default function App() {
             <h1 className="font-semibold tracking-tight text-xs uppercase">Edge-AI <span className="text-orange-500">Shield</span></h1>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => window.open(chrome.runtime.getURL('dashboard.html'), '_blank')}
+              className="p-1.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-colors"
+              title="Open Dashboard"
+            >
+              <Activity size={16} className="text-orange-500" />
+            </button>
             <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-white/5 border border-white/10">
               <div className={`w-1.5 h-1.5 rounded-full ${status === 'RUNNING' ? 'bg-green-500 animate-pulse' : 'bg-white/20'}`} />
               <span className="text-[9px] font-mono uppercase tracking-wider opacity-60">
