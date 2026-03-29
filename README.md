@@ -83,7 +83,7 @@ node server.js
 We are proud to have built this as part of our college tech team.
 - **Machine Learning Engineer**: [Shambhavi](https://github.com/shambhavi-1)
 - **System Designer**: [Mahantesh](https://github.com/mahantesh-git)
-- **Product Engineer**: [Nikhil/Handay](https://github.com/nikhilmanvi360)
+- **Product Engineer**: [Nikhil//Handay](https://github.com/nikhilmanvi360)
 
 ---
 <div align="center">
